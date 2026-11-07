@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SPY 波动率曲面 · 2026-11-06 收盘</title>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#131823; --line:#232a3a; --text:#dfe6f2;
+    --dim:#8792a8; --accent:#7cc4ff; --hot:#ff7a59; --cold:#3fb0a4;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
+    font:13px/1.55 -apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",sans-serif}
+  #app{display:grid;grid-template-columns:1fr 300px;grid-template-rows:auto 1fr auto;
+    height:100vh;gap:0}
+  header{grid-column:1/-1;padding:14px 20px 10px;border-bottom:1px solid var(--line);
+    display:flex;align-items:baseline;gap:16px;flex-wrap:wrap}
+  h1{font-size:16px;margin:0;font-weight:600;letter-spacing:.2px}
+  .src{color:var(--dim);font-size:11.5px}
+  .src b{color:var(--accent);font-weight:600}
+  .pill{display:inline-block;padding:1px 7px;border-radius:9px;background:#1b2436;
+    color:#9fb0cc;font-size:11px;margin-left:6px;border:1px solid #263149}
+  main{position:relative;overflow:hidden}
+  canvas#surface{display:block;width:100%;height:100%;cursor:grab}
+  canvas#surface.drag{cursor:grabbing}
+  .hud{position:absolute;left:14px;top:12px;font-size:11.5px;color:var(--dim);
+    pointer-events:none;line-height:1.7}
+  .hud kbd{background:#1b2436;border:1px solid #2a3550;border-radius:3px;
+    padding:0 4px;color:#a9b8d4;font:11px ui-monospace,monospace}
+  aside{border-left:1px solid var(--line);background:var(--panel);padding:16px;
+    overflow-y:auto;display:flex;flex-direction:column;gap:14px}
+  .btnrow{display:flex;gap:6px;flex-wrap:wrap}
+  button{background:#1b2436;color:#adbbd6;border:1px solid #2a3550;border-radius:5px;
+    padding:5px 9px;font-size:11.5px;cursor:pointer;transition:.15s}
+  button:hover{background:#243049;color:#dbe6f7}
+  button.on{background:#1d3a5c;border-color:#2f6fa8;color:#8fd0ff}
+  .card{background:#0e131d;border:1px solid var(--line);border-radius:7px;padding:11px 12px}
+  .card h3{margin:0 0 8px;font-size:11px;color:var(--dim);font-weight:500;
+    letter-spacing:.6px;text-transform:uppercase}
+  .kv{display:flex;justify-content:space-between;gap:8px;padding:3px 0;font-size:12px}
+  .kv span:first-child{color:var(--dim)}
+  .kv span:last-child{font-variant-numeric:tabular-nums;font-family:ui-monospace,monospace}
+  .big{font-size:22px;font-weight:600;letter-spacing:-.4px;font-variant-numeric:tabular-nums}
+  .muted{color:var(--dim);font-size:11.5px}
+  .legend{display:flex;flex-direction:column;gap:5px;font-size:11px;color:var(--dim)}
+  .bar{height:9px;border-radius:5px;
+    background:linear-gradient(90deg,#440154,#3b528b,#21918c,#5ec962,#fde725)}
+  .bar-row{display:flex;justify-content:space-between;font-size:10.5px;
+    font-variant-numeric:tabular-nums}
+  footer{grid-column:1/-1;border-top:1px solid var(--line);background:#0e131d;
+    display:grid;grid-template-columns:1fr 1fr 1fr;gap:1px;height:186px}
+  .chartbox{position:relative;overflow:hidden;background:#0e131d}
+  canvas.mini{display:block;width:100%;height:100%}
+  .chartlabel{position:absolute;left:12px;top:8px;font-size:11px;color:var(--dim);
+    pointer-events:none}
+  .chartlabel b{color:#b7c4dc;font-weight:500}
+  .dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px;
+    vertical-align:1px}
+  @media(max-width:900px){
+    #app{grid-template-columns:1fr;grid-template-rows:auto 60vh auto auto;height:auto}
+    aside{border-left:0;border-top:1px solid var(--line)}
+    footer{grid-template-columns:1fr;height:520px}
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>SPY 波动率曲面</h1>
+    <div class="src">标的价格 <b id="spot"></b> · 数据日 <b>2026-11-06 16:00 ET</b>
+      · 来源 <b>富途 OpenD get_market_snapshot</b>
+      <span class="pill" id="pill"></span>
+    </div>
+  </header>
+
+  <main>
+    <canvas id="surface"></canvas>
+    <div class="hud">
+      <div><kbd>拖动</kbd> 旋转 &nbsp; <kbd>滚轮</kbd> 缩放 &nbsp; <kbd>点击网格点</kbd> 查看明细</div>
+      <div id="hoverinfo"></div>
+    </div>
+  </main>
+
+  <aside>
+    <div class="card" id="detail">
+      <h3>选中点</h3>
+      <div id="detail-body" class="muted">点击曲面上的任意网格交点</div>
+    </div>
+
+    <div class="card">
+      <h3>视图</h3>
+      <div class="btnrow">
+        <button id="btn-fill" class="on">填充</button>
+        <button id="btn-wire" class="on">网格</button>
+        <button id="btn-d30">30Δ 标记</button>
+      </div>
+      <div class="btnrow" style="margin-top:6px">
+        <button id="btn-reset">重置视角</button>
+        <button id="btn-spin">自动旋转</button>
+      </div>
+      <div class="muted" style="margin-top:10px;line-height:1.65;font-size:11px">
+        <b style="color:#adbbd6">30Δ</b> = 到期时大约有 30% 概率变成实值的期权。
+        按它连线，等于用同样的「虚值程度」去比不同到期日，比固定行权价公平。
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>IV 色阶</h3>
+      <div class="bar"></div>
+      <div class="bar-row"><span id="ivmin"></span><span id="ivmax"></span></div>
+      <div class="legend" style="margin-top:9px">
+        <div><span class="dot" style="background:#ff7a59"></span>30Δ put（下行保护需求）</div>
+        <div><span class="dot" style="background:#59d1ff"></span>30Δ call（上行博弈）</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>读法</h3>
+      <div class="muted" style="line-height:1.7">
+        左低右高 = 下行 put 更贵（股票/指数期权的常态偏斜）。<br>
+        前后方向 = 到期日，越远曲面越平、整体越低。<br>
+        点是插值出来的，方块才是真实报价所在行权价。
+      </div>
+    </div>
+  </aside>
+
+  <footer>
+    <div class="chartbox">
+      <div class="chartlabel"><b>微笑切片</b> · IV vs 行权价（黄=近月，蓝=远月）</div>
+      <canvas id="smile" class="mini"></canvas>
+    </div>
+    <div class="chartbox">
+      <div class="chartlabel"><b>期限结构</b> · 平值 IV vs 剩余天数</div>
+      <canvas id="term" class="mini"></canvas>
+    </div>
+    <div class="chartbox">
+      <div class="chartlabel"><b>30Δ 期限结构</b> ·
+        <span style="color:#ff7a59">put</span> / <span style="color:#59d1ff">call</span> 的 IV 与偏斜</div>
+      <canvas id="d30term" class="mini"></canvas>
+    </div>
+  </footer>
+</div>
+
+<script>
+const DATA = {"spot":735.29,"moneyness":[0.88,0.895,0.91,0.925,0.94,0.955,0.97,0.985,1.0,1.015,1.03,1.045,1.06,1.075,1.09,1.105,1.12],"dtes":[14,21,28,42,70,105,133,236],"expiries":["2026-11-20","2026-11-27","2026-12-04","2026-12-18","2027-01-15","2027-02-19","2027-03-19","2027-06-30"],"z":[[42.279,39.478,36.768,34.16,31.67,29.295,27.022,24.803,22.591,20.324,18.177,16.481,15.573,15.755,17.01,18.876,20.925],[37.458,35.209,33.023,30.908,28.825,26.809,24.836,22.876,20.933,18.897,16.984,15.37,14.374,14.226,14.861,15.894,17.191],[35.187,33.263,31.372,29.518,27.704,25.898,24.112,22.33,20.529,18.677,16.934,15.433,14.397,13.981,14.129,14.8,15.666],[32.884,31.325,29.787,28.268,26.762,25.245,23.727,22.198,20.404,18.162,16.717,15.484,14.516,13.934,13.736,13.961,14.443],[29.415,28.167,26.941,25.738,24.539,23.353,22.173,21.018,19.809,17.439,16.319,15.327,14.476,13.833,13.43,13.275,13.285],[27.319,26.296,25.282,24.286,23.289,22.308,21.333,20.385,19.406,17.504,16.578,15.709,14.935,14.291,13.774,13.415,13.189],[26.494,25.581,24.678,23.782,22.889,21.998,21.113,20.256,19.364,17.6,16.768,15.977,15.253,14.622,14.098,13.682,13.359],[24.687,24.035,23.392,22.752,22.113,21.471,20.847,20.218,19.242,17.757,17.123,16.534,15.954,15.413,14.915,14.48,14.107]],"d30":{"put":[{"ji":0,"expiry":"2026-11-20","dte":14,"strike":719.0,"delta":-0.3,"iv":25.854,"moneyness":0.97785,"i":7},{"ji":1,"expiry":"2026-11-27","dte":21,"strike":715.0,"delta":-0.286,"iv":24.516,"moneyness":0.97241,"i":6},{"ji":2,"expiry":"2026-12-04","dte":28,"strike":715.0,"delta":-0.302,"iv":23.829,"moneyness":0.97241,"i":6},{"ji":3,"expiry":"2026-12-18","dte":42,"strike":711.0,"delta":-0.302,"iv":24.035,"moneyness":0.96697,"i":6},{"ji":4,"expiry":"2027-01-15","dte":70,"strike":705.0,"delta":-0.293,"iv":23.051,"moneyness":0.95881,"i":5},{"ji":5,"expiry":"2027-02-19","dte":105,"strike":705.0,"delta":-0.306,"iv":22.061,"moneyness":0.95881,"i":5},{"ji":6,"expiry":"2027-03-19","dte":133,"strike":700.0,"delta":-0.296,"iv":22.175,"moneyness":0.95201,"i":5},{"ji":7,"expiry":"2027-06-30","dte":236,"strike":696.0,"delta":-0.3,"iv":21.831,"moneyness":0.94657,"i":4}],"call":[{"ji":0,"expiry":"2026-11-20","dte":14,"strike":752.0,"delta":0.299,"iv":19.185,"moneyness":1.02273,"i":10},{"ji":1,"expiry":"2026-11-27","dte":21,"strike":754.0,"delta":0.305,"iv":17.542,"moneyness":1.02545,"i":10},{"ji":2,"expiry":"2026-12-04","dte":28,"strike":757.0,"delta":0.303,"iv":16.989,"moneyness":1.02953,"i":10},{"ji":3,"expiry":"2026-12-18","dte":42,"strike":762.0,"delta":0.3,"iv":16.173,"moneyness":1.03633,"i":10},{"ji":4,"expiry":"2027-01-15","dte":70,"strike":770.0,"delta":0.298,"iv":15.19,"moneyness":1.04721,"i":11},{"ji":5,"expiry":"2027-02-19","dte":105,"strike":780.0,"delta":0.295,"iv":14.895,"moneyness":1.06081,"i":12},{"ji":6,"expiry":"2027-03-19","dte":133,"strike":785.0,"delta":0.307,"iv":14.922,"moneyness":1.06761,"i":13},{"ji":7,"expiry":"2027-06-30","dte":236,"strike":810.0,"delta":0.299,"iv":14.572,"moneyness":1.10161,"i":15}]},"rawCount":1366,"fetchedAt":"2026-11-07 08:10:05"};
+
+/* ---------- 基础 ---------- */
+const NX = DATA.moneyness.length, NY = DATA.dtes.length;
+const ivFlat = DATA.z.flat();
+const IVMIN = Math.min(...ivFlat), IVMAX = Math.max(...ivFlat);
+
+document.getElementById('spot').textContent = DATA.spot.toFixed(2);
+document.getElementById('pill').textContent = NY + ' 个到期日 · ' + NX + ' 档行权价 · ' + DATA.rawCount + ' 张合约';
+document.getElementById('ivmin').textContent = IVMIN.toFixed(1) + '%';
+document.getElementById('ivmax').textContent = IVMAX.toFixed(1) + '%';
+
+const VIRIDIS = [[68,1,84],[72,40,120],[62,74,137],[49,104,142],[38,130,142],
+                 [31,158,137],[53,183,121],[109,205,89],[180,222,44],[253,231,37]];
+function viridis(t){
+  t = Math.max(0, Math.min(1, t));
+  const p = t * (VIRIDIS.length - 1), i = Math.min(VIRIDIS.length - 2, Math.floor(p)), f = p - i;
+  const a = VIRIDIS[i], b = VIRIDIS[i+1];
+  return [a[0]+(b[0]-a[0])*f, a[1]+(b[1]-a[1])*f, a[2]+(b[2]-a[2])*f];
+}
+function dteColor(j){
+  const t = Math.max(0, Math.min(1, j / (NY - 1)));
+  const a = [255, 209, 102], b = [122, 168, 255];
+  return 'rgb(' + Math.round(a[0]+(b[0]-a[0])*t) + ',' +
+                  Math.round(a[1]+(b[1]-a[1])*t) + ',' +
+                  Math.round(a[2]+(b[2]-a[2])*t) + ')';
+}
+function rgba(c, a){ return 'rgba(' + (c[0]|0) + ',' + (c[1]|0) + ',' + (c[2]|0) + ',' + a + ')'; }
+function ivColor(iv, alpha){
+  return rgba(viridis((iv - IVMIN) / (IVMAX - IVMIN)), alpha === undefined ? 1 : alpha);
+}
+
+/* ---------- 三维投影 ---------- */
+const state = { yaw: -0.42, pitch: 0.27, zoom: 1, spin: false,
+                fill: true, wire: true, d30: false, sel: null };
+
+const cv = document.getElementById('surface');
+const ctx = cv.getContext('2d');
+let W = 0, H = 0, DPR = Math.min(2, window.devicePixelRatio || 1);
+
+function resize(){
+  const r = cv.parentElement.getBoundingClientRect();
+  W = r.width; H = r.height;
+  cv.width = W * DPR; cv.height = H * DPR;
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  draw();
+}
+
+const YSPAN = 0.80;
+function vert(i, j){
+  const iv = DATA.z[j][i];
+  return {
+    i, j, iv,
+    x: (i/(NX-1) - 0.5) * 2.5,
+    z: (j/(NY-1) - 0.5) * 2.1,
+    y: ((iv - IVMIN)/(IVMAX - IVMIN) - 0.5) * 2 * YSPAN
+  };
+}
+function project(p){
+  const cy = Math.cos(state.yaw), sy = Math.sin(state.yaw);
+  const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+  const X = p.x*cy - p.z*sy;
+  const Z = p.x*sy + p.z*cy;
+  const Y = p.y*cp - Z*sp;
+  const Z2 = p.y*sp + Z*cp;
+  const f = 4.2;
+  const s = state.zoom * Math.min(W, H) * 1.42 / (f + Z2);
+  return { x: W/2 - 26 + X*s, y: H/2 - Y*s + 26, d: Z2, s };
+}
+
+/* ---------- 主绘制 ---------- */
+function draw(){
+  ctx.clearRect(0, 0, W, H);
+  if (!W || !H) return;
+
+  // 底平面（给空间参照，避免远边被误读成尖峰）
+  ctx.lineWidth = 1;
+  const baseY = -YSPAN * 1.24;
+  const f0 = project({x:-1.25, y:baseY, z:-1.05});
+  const f1 = project({x: 1.25, y:baseY, z:-1.05});
+  const f2 = project({x: 1.25, y:baseY, z: 1.05});
+  const f3 = project({x:-1.25, y:baseY, z: 1.05});
+  ctx.beginPath();
+  ctx.moveTo(f0.x,f0.y); ctx.lineTo(f1.x,f1.y); ctx.lineTo(f2.x,f2.y); ctx.lineTo(f3.x,f3.y);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(20,27,40,0.72)'; ctx.fill();
+  ctx.strokeStyle = 'rgba(90,110,150,0.22)'; ctx.stroke();
+  for (let j = 0; j < NY; j++){
+    const a = project({x:-1.25, y:baseY, z:(j/(NY-1)-0.5)*2.1});
+    const b = project({x: 1.25, y:baseY, z:(j/(NY-1)-0.5)*2.1});
+    ctx.strokeStyle = 'rgba(90,110,150,0.17)';
+    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+  }
+  for (let i = 0; i < NX; i++){
+    const a = project({x:(i/(NX-1)-0.5)*2.5, y:baseY, z:-1.05});
+    const b = project({x:(i/(NX-1)-0.5)*2.5, y:baseY, z: 1.05});
+    ctx.strokeStyle = 'rgba(90,110,150,0.17)';
+    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+  }
+
+  // 顶点
+  const P = [];
+  for (let j = 0; j < NY; j++){
+    P.push([]);
+    for (let i = 0; i < NX; i++) P[j].push(project(vert(i,j)));
+  }
+
+  // 四角立柱：把高度锚到地面上
+  ctx.setLineDash([2,4]);
+  for (const [i,j] of [[0,0],[NX-1,0],[0,NY-1],[NX-1,NY-1]]){
+    const v = vert(i,j);
+    const a = project({x:v.x, y:baseY, z:v.z});
+    const b = P[j][i];
+    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y);
+    ctx.strokeStyle = 'rgba(120,140,175,0.28)'; ctx.lineWidth = 1; ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  // 四边形按深度排序（画家算法）
+  const quads = [];
+  for (let j = 0; j < NY-1; j++){
+    for (let i = 0; i < NX-1; i++){
+      const v = [P[j][i], P[j][i+1], P[j+1][i+1], P[j+1][i]];
+      const d = (v[0].d + v[1].d + v[2].d + v[3].d) / 4;
+      const iv = (DATA.z[j][i] + DATA.z[j][i+1] + DATA.z[j+1][i+1] + DATA.z[j+1][i]) / 4;
+      quads.push({ v, d, iv });
+    }
+  }
+  quads.sort((a,b) => b.d - a.d);
+
+  if (state.fill){
+    for (const q of quads){
+      ctx.beginPath();
+      ctx.moveTo(q.v[0].x, q.v[0].y);
+      for (let k = 1; k < 4; k++) ctx.lineTo(q.v[k].x, q.v[k].y);
+      ctx.closePath();
+      ctx.fillStyle = ivColor(q.iv, 0.93);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.18)';
+      ctx.lineWidth = 0.6;
+      ctx.stroke();
+    }
+  }
+
+  if (state.wire){
+    ctx.lineWidth = 1;
+    for (let j = 0; j < NY; j++){
+      ctx.beginPath();
+      for (let i = 0; i < NX; i++){
+        const p = P[j][i];
+        i ? ctx.lineTo(p.x,p.y) : ctx.moveTo(p.x,p.y);
+      }
+      ctx.strokeStyle = 'rgba(10,14,22,0.55)';
+      ctx.stroke();
+    }
+    for (let i = 0; i < NX; i++){
+      ctx.beginPath();
+      for (let j = 0; j < NY; j++){
+        const p = P[j][i];
+        j ? ctx.lineTo(p.x,p.y) : ctx.moveTo(p.x,p.y);
+      }
+      ctx.strokeStyle = 'rgba(10,14,22,0.45)';
+      ctx.stroke();
+    }
+  }
+
+  // 30 delta 轨线
+  if (state.d30){
+    for (const side of ['put','call']){
+      const surf = DATA.d30[side].map(o => {
+        const ic = (o.moneyness - DATA.moneyness[0]) /
+                   (DATA.moneyness[NX-1] - DATA.moneyness[0]) * (NX-1);
+        return project({
+          x: (ic/(NX-1) - 0.5) * 2.5,
+          z: (o.ji/(NY-1) - 0.5) * 2.1,
+          y: ((o.iv - IVMIN)/(IVMAX - IVMIN) - 0.5) * 2 * YSPAN
+        });
+      });
+      ctx.beginPath();
+      surf.forEach((p,k) => k ? ctx.lineTo(p.x,p.y) : ctx.moveTo(p.x,p.y));
+      ctx.strokeStyle = side === 'put' ? 'rgba(255,122,89,0.9)' : 'rgba(89,209,255,0.9)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      for (const p of surf){
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 3.4, 0, 7);
+        ctx.fillStyle = side === 'put' ? '#ff7a59' : '#59d1ff';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = 1; ctx.stroke();
+      }
+    }
+  }
+
+  // 选中点
+  if (state.sel){
+    const { i, j } = state.sel;
+    const p = P[j][i];
+    const floor = project({x:vert(i,j).x, y:baseY, z:vert(i,j).z});
+    ctx.setLineDash([3,4]);
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(floor.x,floor.y); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.beginPath(); ctx.arc(p.x, p.y, 6.5, 0, 7);
+    ctx.fillStyle = '#fff'; ctx.fill();
+    ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, 7);
+    ctx.fillStyle = ivColor(DATA.z[j][i]); ctx.fill();
+
+    ctx.font = '600 12px -apple-system,PingFang SC,sans-serif';
+    ctx.fillStyle = '#fff';
+    ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.lineWidth = 3;
+    const label = DATA.z[j][i].toFixed(2) + '%';
+    ctx.strokeText(label, p.x + 11, p.y - 9);
+    ctx.fillText(label, p.x + 11, p.y - 9);
+  }
+
+  // 轴标签
+  ctx.font = '11px ui-monospace,Menlo,monospace';
+  ctx.lineJoin = 'round';
+  function label(txt, x, y, color, align){
+    ctx.textAlign = align || 'center';
+    ctx.strokeStyle = 'rgba(11,14,20,0.92)';
+    ctx.lineWidth = 3;
+    ctx.strokeText(txt, x, y);
+    ctx.fillStyle = color || 'rgba(160,175,205,0.95)';
+    ctx.fillText(txt, x, y);
+  }
+  // 行权价刻度（前缘）
+  for (let i = 0; i < NX; i += 4){
+    const p = project({x:(i/(NX-1)-0.5)*2.5, y:baseY - 0.07, z: 1.05});
+    label((DATA.moneyness[i]*DATA.spot).toFixed(0), p.x, p.y + 15);
+  }
+  label('行权价', W - 78, H - 24, 'rgba(120,138,168,0.9)', 'left');
+  // 到期日刻度（右缘）
+  const dl = [];
+  for (let j = 0; j < NY; j++){
+    if (j % 2 && j !== NY-1) continue;
+    const p = project({x: 1.25 + 0.06, y: baseY - 0.02, z:(j/(NY-1)-0.5)*2.1});
+    dl.push({ txt: DATA.dtes[j] + 'd', x: p.x, y: p.y + 4 });
+  }
+  dl.sort((a,b) => a.y - b.y);
+  for (let k = 1; k < dl.length; k++)
+    if (dl[k].y - dl[k-1].y < 13) dl[k].y = dl[k-1].y + 13;
+  dl.forEach(o => label(o.txt, o.x, o.y, 'rgba(160,175,205,0.92)', 'left'));
+  // IV 竖轴（曲面外侧）
+  const ax = -1.46, az = 1.05;
+  for (let t = 0; t <= 4; t++){
+    const iv = IVMIN + (IVMAX - IVMIN) * t / 4;
+    const p = project({x:ax, y: ((iv-IVMIN)/(IVMAX-IVMIN)-0.5)*2*YSPAN, z:az});
+    ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x + 5, p.y);
+    ctx.strokeStyle = 'rgba(120,140,175,0.45)'; ctx.stroke();
+    label(iv.toFixed(0) + '%', p.x - 4, p.y + 4, 'rgba(160,175,205,0.92)', 'right');
+  }
+  ctx.textAlign = 'left';
+}
+
+/* ---------- 交互 ---------- */
+let drag = null;
+cv.addEventListener('pointerdown', e => {
+  drag = { x: e.clientX, y: e.clientY, yaw: state.yaw, pitch: state.pitch, moved: 0 };
+  cv.classList.add('drag'); cv.setPointerCapture(e.pointerId);
+});
+cv.addEventListener('pointermove', e => {
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  drag.moved = Math.max(drag.moved, Math.abs(dx) + Math.abs(dy));
+  state.yaw = drag.yaw + dx * 0.008;
+  state.pitch = Math.max(-0.05, Math.min(1.35, drag.pitch + dy * 0.006));
+  draw();
+});
+cv.addEventListener('pointerup', e => {
+  cv.classList.remove('drag');
+  if (drag && drag.moved < 5) pick(e);
+  drag = null;
+});
+cv.addEventListener('wheel', e => {
+  e.preventDefault();
+  state.zoom = Math.max(0.55, Math.min(2.4, state.zoom * (e.deltaY > 0 ? 0.92 : 1.08)));
+  draw();
+}, { passive: false });
+
+function pick(e){
+  const r = cv.getBoundingClientRect();
+  const mx = e.clientX - r.left, my = e.clientY - r.top;
+  let best = null, bd = 22;
+  for (let j = 0; j < NY; j++){
+    for (let i = 0; i < NX; i++){
+      const p = project(vert(i,j));
+      const d = Math.hypot(p.x - mx, p.y - my);
+      if (d < bd){ bd = d; best = { i, j }; }
+    }
+  }
+  state.sel = best;
+  renderDetail();
+  draw();
+}
+
+function renderDetail(){
+  const box = document.getElementById('detail-body');
+  if (!state.sel){ box.innerHTML = '<span class="muted">点击曲面上的任意网格交点</span>'; return; }
+  const { i, j } = state.sel;
+  const m = DATA.moneyness[i], iv = DATA.z[j][i], dte = DATA.dtes[j];
+  const strike = m * DATA.spot;
+  const side = m < 0.998 ? 'put（虚值）' : (m > 1.002 ? 'call（虚值）' : '平值附近');
+  const d30 = DATA.d30.put.find(o => o.ji === j);
+  const d30c = DATA.d30.call.find(o => o.ji === j);
+  box.innerHTML =
+    '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:8px">' +
+      '<div class="big" style="color:' + ivColor(iv) + '">' + iv.toFixed(2) + '%</div>' +
+      '<div class="muted">隐含波动率</div></div>' +
+    '<div class="kv"><span>到期日</span><span>' + DATA.expiries[j] + ' · ' + dte + 'D</span></div>' +
+    '<div class="kv"><span>行权价</span><span>' + strike.toFixed(0) + '</span></div>' +
+    '<div class="kv"><span>moneyness</span><span>' + m.toFixed(3) + '</span></div>' +
+    '<div class="kv"><span>取值侧</span><span>' + side + '</span></div>' +
+    '<div class="kv"><span>相对平值</span><span>' + ((iv / DATA.z[j][8] - 1) * 100).toFixed(1) + '%</span></div>' +
+    '<div class="muted" style="margin-top:9px;border-top:1px solid #232a3a;padding-top:8px">' +
+      '同日 30Δ：put ' + (d30 ? d30.strike.toFixed(0) + ' / ' + d30.iv.toFixed(2) + '%' : '—') +
+      '，call ' + (d30c ? d30c.strike.toFixed(0) + ' / ' + d30c.iv.toFixed(2) + '%' : '—') +
+    '</div>';
+}
+
+/* ---------- 按钮 ---------- */
+const bf = document.getElementById('btn-fill'), bw = document.getElementById('btn-wire'),
+      bd30 = document.getElementById('btn-d30'), bs = document.getElementById('btn-spin');
+bf.onclick = () => { state.fill = !state.fill; bf.classList.toggle('on', state.fill); draw(); };
+bw.onclick = () => { state.wire = !state.wire; bw.classList.toggle('on', state.wire); draw(); };
+bd30.onclick = () => { state.d30 = !state.d30; bd30.classList.toggle('on', state.d30); draw(); };
+document.getElementById('btn-reset').onclick = () => {
+  state.yaw = -0.42; state.pitch = 0.27; state.zoom = 1; draw();
+};
+bs.onclick = () => {
+  state.spin = !state.spin; bs.classList.toggle('on', state.spin);
+  if (state.spin) tick(); else cancelAnimationFrame(spinRAF);
+};
+let spinRAF = 0;
+function tick(){
+  if (!state.spin) return;
+  state.yaw += 0.0035;
+  draw();
+  spinRAF = requestAnimationFrame(tick);
+}
+
+/* ---------- 2D 图 ---------- */
+function drawSmile(){
+  const c = document.getElementById('smile');
+  const r = c.parentElement.getBoundingClientRect();
+  c.width = r.width * DPR; c.height = r.height * DPR;
+  const g = c.getContext('2d'); g.setTransform(DPR,0,0,DPR,0,0);
+  const w = r.width, h = r.height;
+  const padL = 44, padR = 58, padT = 30, padB = 26;
+  const xmin = DATA.moneyness[0], xmax = DATA.moneyness[NX-1];
+  const ymin = IVMIN - 1, ymax = IVMAX + 1;
+  const X = v => padL + (v - xmin) / (xmax - xmin) * (w - padL - padR);
+  const Y = v => h - padB - (v - ymin) / (ymax - ymin) * (h - padT - padB);
+  g.clearRect(0,0,w,h);
+  g.strokeStyle = 'rgba(90,110,150,0.22)'; g.lineWidth = 1;
+  g.font = '10px ui-monospace,monospace'; g.fillStyle = 'rgba(140,155,185,0.9)';
+  for (let t = 0; t <= 4; t++){
+    const v = ymin + (ymax - ymin) * t / 4;
+    g.beginPath(); g.moveTo(padL, Y(v)); g.lineTo(w - padR, Y(v)); g.stroke();
+    g.textAlign = 'right'; g.fillText(v.toFixed(0) + '%', padL - 6, Y(v) + 3);
+  }
+  for (let i = 0; i < NX; i += 4){
+    const v = DATA.moneyness[i] * DATA.spot;
+    g.textAlign = 'center'; g.fillText(v.toFixed(0), X(DATA.moneyness[i]), h - padB + 14);
+  }
+  // 平值参考线
+  g.setLineDash([3,4]); g.strokeStyle = 'rgba(255,255,255,0.22)';
+  g.beginPath(); g.moveTo(X(1), padT - 8); g.lineTo(X(1), h - padB); g.stroke();
+  g.setLineDash([]);
+
+  DATA.z.forEach((row, j) => {
+    g.beginPath();
+    row.forEach((iv, i) => i ? g.lineTo(X(DATA.moneyness[i]), Y(iv)) : g.moveTo(X(DATA.moneyness[i]), Y(iv)));
+    g.strokeStyle = dteColor(j);
+    g.lineWidth = (j === 0 || j === NY-1) ? 2 : 1.4;
+    g.stroke();
+  });
+  // DTE 渐变图例
+  const lgW = 54, lgX = w - padR - lgW, lgY = 14;
+  for (let k = 0; k < lgW; k++){
+    g.fillStyle = dteColor(k / (lgW - 1) * (NY - 1));
+    g.fillRect(lgX + k, lgY, 1, 4);
+  }
+  g.font = '10px ui-monospace,monospace';
+  g.fillStyle = 'rgba(150,165,195,0.9)'; g.textAlign = 'right';
+  g.fillText(DATA.dtes[0] + 'd', lgX - 4, lgY + 4);
+  g.textAlign = 'left';
+  g.fillText(DATA.dtes[NY-1] + 'd', lgX + lgW + 4, lgY + 4);
+}
+
+function drawTerm(){
+  const c = document.getElementById('term');
+  const r = c.parentElement.getBoundingClientRect();
+  c.width = r.width * DPR; c.height = r.height * DPR;
+  const g = c.getContext('2d'); g.setTransform(DPR,0,0,DPR,0,0);
+  const w = r.width, h = r.height;
+  const padL = 44, padR = 24, padT = 30, padB = 26;
+  const atm = DATA.z.map(row => row[8]);
+  const dtes = DATA.dtes;
+  const xmin = -3, xmax = Math.max(...dtes) + 6;
+  const ymin = Math.min(...atm) - 1.2, ymax = Math.max(...atm) + 1.2;
+  const X = v => padL + (v - xmin) / (xmax - xmin) * (w - padL - padR);
+  const Y = v => h - padB - (v - ymin) / (ymax - ymin) * (h - padT - padB);
+  g.clearRect(0,0,w,h);
+  g.strokeStyle = 'rgba(90,110,150,0.22)'; g.lineWidth = 1;
+  g.font = '10px ui-monospace,monospace'; g.fillStyle = 'rgba(140,155,185,0.9)';
+  for (let t = 0; t <= 4; t++){
+    const v = ymin + (ymax - ymin) * t / 4;
+    g.beginPath(); g.moveTo(padL, Y(v)); g.lineTo(w - padR, Y(v)); g.stroke();
+    g.textAlign = 'right'; g.fillText(v.toFixed(0) + '%', padL - 6, Y(v) + 3);
+  }
+  g.textAlign = 'center';
+  let px = -1e9;
+  dtes.forEach((d,k) => {
+    const x = X(d);
+    if (x - px < 24 && k !== dtes.length-1) return;
+    g.fillText(d + 'd', x, h - padB + 14); px = x;
+  });
+  // 面积 + 折线
+  g.beginPath(); g.moveTo(X(dtes[0]), Y(atm[0]));
+  dtes.forEach((d,k) => k && g.lineTo(X(d), Y(atm[k])));
+  g.lineTo(X(dtes[dtes.length-1]), h - padB); g.lineTo(X(dtes[0]), h - padB); g.closePath();
+  g.fillStyle = 'rgba(124,196,255,0.10)'; g.fill();
+  g.beginPath();
+  dtes.forEach((d,k) => k ? g.lineTo(X(d), Y(atm[k])) : g.moveTo(X(d), Y(atm[k])));
+  g.strokeStyle = '#7cc4ff'; g.lineWidth = 2; g.stroke();
+  g.fillStyle = '#7cc4ff';
+  dtes.forEach((d,k) => {
+    g.beginPath(); g.arc(X(d), Y(atm[k]), 3, 0, 7); g.fill();
+  });
+  g.font = '10px ui-monospace,monospace'; g.fillStyle = 'rgba(170,190,220,0.95)';
+  g.textAlign = 'left';
+  g.fillText(atm[0].toFixed(1) + '%', X(dtes[0]) + 6, Y(atm[0]) - 6);
+  g.fillText(atm[atm.length-1].toFixed(1) + '%', X(dtes[dtes.length-1]) - 34, Y(atm[atm.length-1]) - 8);
+}
+
+function drawD30Term(){
+  const c = document.getElementById('d30term');
+  const r = c.parentElement.getBoundingClientRect();
+  c.width = r.width * DPR; c.height = r.height * DPR;
+  const g = c.getContext('2d'); g.setTransform(DPR,0,0,DPR,0,0);
+  const w = r.width, h = r.height;
+  const padL = 44, padR = 30, padT = 30, padB = 26;
+  const dtes = DATA.d30.put.map(o => o.dte);
+  const pv = DATA.d30.put.map(o => o.iv);
+  const cvv = DATA.d30.call.map(o => o.iv);
+  const all = pv.concat(cvv);
+  const xmin = -3, xmax = Math.max(...dtes) + 6;
+  const ymin = Math.min(...all) - 1.2, ymax = Math.max(...all) + 1.2;
+  const X = v => padL + (v - xmin) / (xmax - xmin) * (w - padL - padR);
+  const Y = v => h - padB - (v - ymin) / (ymax - ymin) * (h - padT - padB);
+  g.clearRect(0,0,w,h);
+  g.strokeStyle = 'rgba(90,110,150,0.22)'; g.lineWidth = 1;
+  g.font = '10px ui-monospace,monospace'; g.fillStyle = 'rgba(140,155,185,0.9)';
+  for (let t = 0; t <= 4; t++){
+    const v = ymin + (ymax - ymin) * t / 4;
+    g.beginPath(); g.moveTo(padL, Y(v)); g.lineTo(w - padR, Y(v)); g.stroke();
+    g.textAlign = 'right'; g.fillText(v.toFixed(0) + '%', padL - 6, Y(v) + 3);
+  }
+  g.textAlign = 'center';
+  let px2 = -1e9;
+  dtes.forEach((d,k) => {
+    const x = X(d);
+    if (x - px2 < 24 && k !== dtes.length-1) return;
+    g.fillText(d + 'd', x, h - padB + 14); px2 = x;
+  });
+
+  // 偏斜带（call 与 put 之间的区域）
+  g.beginPath();
+  dtes.forEach((d,k) => k ? g.lineTo(X(d), Y(pv[k])) : g.moveTo(X(d), Y(pv[k])));
+  for (let k = dtes.length - 1; k >= 0; k--) g.lineTo(X(dtes[k]), Y(cvv[k]));
+  g.closePath(); g.fillStyle = 'rgba(124,196,255,0.07)'; g.fill();
+
+  [[pv,'#ff7a59'], [cvv,'#59d1ff']].forEach(([arr,col]) => {
+    g.beginPath();
+    dtes.forEach((d,k) => k ? g.lineTo(X(d), Y(arr[k])) : g.moveTo(X(d), Y(arr[k])));
+    g.strokeStyle = col; g.lineWidth = 2; g.stroke();
+    g.fillStyle = col;
+    dtes.forEach((d,k) => { g.beginPath(); g.arc(X(d), Y(arr[k]), 2.6, 0, 7); g.fill(); });
+  });
+
+  g.font = '10px ui-monospace,monospace';
+  g.fillStyle = '#ff7a59'; g.textAlign = 'left';
+  g.fillText(pv[0].toFixed(1) + '%', X(dtes[0]) + 6, Y(pv[0]) - 5);
+  g.fillStyle = '#59d1ff';
+  g.fillText(cvv[0].toFixed(1) + '%', X(dtes[0]) + 6, Y(cvv[0]) + 12);
+
+  // 25Δ risk reversal
+  const rr0 = cvv[0] - pv[0], rrN = cvv[cvv.length-1] - pv[pv.length-1];
+  g.font = '10px -apple-system,PingFang SC,sans-serif';
+  g.fillStyle = 'rgba(150,165,195,0.9)'; g.textAlign = 'right';
+  g.fillText('risk reversal ' + rr0.toFixed(1) + ' → ' + rrN.toFixed(1), w - padR, padT - 8);
+}
+
+/* ---------- 启动 ---------- */
+const ro = new ResizeObserver(() => { if (location.hash.indexOf('d30') >= 0){
+  state.d30 = true;
+  document.getElementById('btn-d30').classList.add('on');
+}
+resize(); drawSmile(); drawTerm(); });
+ro.observe(document.querySelector('main'));
+ro.observe(document.querySelector('footer'));
+const ro2 = new ResizeObserver(() => { drawSmile(); drawTerm(); drawD30Term(); });
+
+window.addEventListener('resize', () => { if (location.hash.indexOf('d30') >= 0){
+  state.d30 = true;
+  document.getElementById('btn-d30').classList.add('on');
+}
+resize(); drawSmile(); drawTerm(); });
+if (location.hash.indexOf('d30') >= 0){
+  state.d30 = true;
+  document.getElementById('btn-d30').classList.add('on');
+}
+resize(); drawSmile(); drawTerm(); drawD30Term();
+</script>
+</body>
+</html>
